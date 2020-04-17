@@ -1,0 +1,202 @@
+--- a/jffs2.c
++++ b/jffs2.c
+@@ -26,6 +26,7 @@
+ #include <dirent.h>
+ #include <unistd.h>
+ #include <endian.h>
++#include <limits.h>
+ #include "jffs2.h"
+ #include "crc32.h"
+ #include "mtd.h"
+@@ -34,10 +35,14 @@
+ 
+ #if BYTE_ORDER == BIG_ENDIAN
+ # define CLEANMARKER "\x19\x85\x20\x03\x00\x00\x00\x0c\xf0\x60\xdc\x98"
++# define TARFILEMARKER "\xad\xdd\xf1\x11"
+ #else
+ # define CLEANMARKER "\x85\x19\x03\x20\x0c\x00\x00\x00\xb1\xb0\x1e\xe4"
++# define TARFILEMARKER "\x11\xf1\xdd\xad"
+ #endif
+ 
++#define CRC_BUF_LEN 4096
++
+ static int last_ino = 0;
+ static int last_version = 0;
+ static char *buf = NULL;
+@@ -236,24 +241,120 @@ static void add_file(const char *name, i
+ 	close(fd);
+ }
+ 
+-int mtd_replace_jffs2(const char *mtd, int fd, int ofs, const char *filename)
++void add_tar_cleanup(int fd, int in_mtdofs)
+ {
+-	outfd = fd;
+-	mtdofs = ofs;
+-
+-	buf = malloc(erasesize);
+-	target_ino = 1;
+-	if (!last_ino)
+-		last_ino = 1;
+-	add_file(filename, target_ino);
+-	pad(erasesize);
++	ofs = 0;
++	mtdofs = in_mtdofs;
+ 
+-	/* add eof marker, pad to eraseblock size and write the data */
++	/* If at any point we fail, erase the first block
++	 * and replace the JFFS2_EOF. In mtd_add_tar_file_jffs2(),
++	 * return a 'skip' of 1 erase block so that we jump over 0xdeadc0de. */
++	mtd_erase_block(fd, mtdofs);
+ 	add_data(JFFS2_EOF, sizeof(JFFS2_EOF) - 1);
+ 	pad(erasesize);
+-	free(buf);
++}
++
++int mtd_add_tar_file_jffs2(const char *mtd, int fd, int in_mtdofs, const char *filename)
++{
++	outfd = fd;
++	mtdofs = in_mtdofs;
++	struct stat tar_file_st;
++	int tar_fd;
++	int bytes_crc = 0;
++	int bytes_read = 0;
++	int total_bytes_read = 0;
++	char* crc_buf;
++	uint32_t temp_file_size = 0;
++	uint32_t tar_crc = 0;
++	uint32_t mask = 0xffffffff;
++
++	/* If sysupgrade.tgz passed in,
++	 * write 16-byte header followed by file contents.
++	 * TARFILEMARKER will head each subsequent block
++	 * needed to write the rest of the file. */
++	if (!stat(filename, &tar_file_st)){
++		tar_fd = open(filename, 0);
++		if (tar_fd < 0) {
++			fprintf(stderr, "File %s does not exist\n", filename);
++			add_tar_cleanup(outfd, in_mtdofs);
++			return erasesize;
++		}
++
++		/* Calculate crc */
++		crc_buf = malloc(CRC_BUF_LEN);
++		if(!crc_buf){
++			fprintf(stderr, "Out of memory\n");
++			add_tar_cleanup(outfd, in_mtdofs);
++			return erasesize;
++		}
++		bytes_crc = read(tar_fd, crc_buf, CRC_BUF_LEN);
++		tar_crc = crc32(0, crc_buf, bytes_crc);
++		while(bytes_crc)
++		{
++			bytes_crc = read(tar_fd, crc_buf, CRC_BUF_LEN);
++			tar_crc = crc32(tar_crc, crc_buf, bytes_crc);
++		}
++		free(crc_buf);
++		lseek(tar_fd, 0, SEEK_SET);
++		buf = malloc(erasesize);
++		if(!buf){
++			fprintf(stderr, "Out of memory\n");
++			add_tar_cleanup(outfd, in_mtdofs);
++			return erasesize;
++		}
++		ofs = 0;
++
++		add_data(JFFS2_EOF, sizeof(JFFS2_EOF) - 1);
++		add_data(TARFILEMARKER, sizeof(TARFILEMARKER) - 1);
++
++		/* sizeof(off_t) can be 16 to 64 bytes.
++		 * Set the cut off at 4 bytes unsigned */
++		if(tar_file_st.st_size >= 0 && tar_file_st.st_size <= UINT_MAX){
++			temp_file_size = tar_file_st.st_size & mask;
++		}
++		else{
++			fprintf(stderr, "Incoming tar file too large. Tar file size is %lld, max size is %u"
++				, tar_file_st.st_size
++				, UINT_MAX
++				);
++			add_tar_cleanup(outfd, in_mtdofs);
++			free(buf);
++			close(tar_fd);
++			return erasesize;
++		}
++
++		add_data((char*)&tar_crc, sizeof(tar_crc));
++		add_data((char*)&temp_file_size, sizeof(mask));
++
++		total_bytes_read = read(tar_fd, buf + ofs,
++			erasesize - (sizeof(JFFS2_EOF) - 1 + sizeof(TARFILEMARKER) - 1 + sizeof(erasesize) + 4));
++		ofs += total_bytes_read;
++		pad(erasesize);
++
++		while(total_bytes_read != temp_file_size && mtdofs < mtdsize)
++		{
++			ofs = 0;
++			add_data(TARFILEMARKER, sizeof(TARFILEMARKER) - 1);
++			bytes_read = read(tar_fd, buf + ofs, erasesize - sizeof(TARFILEMARKER) - 1);
++			ofs += bytes_read;
++			pad(erasesize);
++			total_bytes_read += bytes_read;
++		}
++		if(total_bytes_read != tar_file_st.st_size){
++			fprintf(stderr, "Error reading from file %s\n", filename);
++			add_tar_cleanup(outfd, in_mtdofs);
++			free(buf);
++			close(tar_fd);
++			return erasesize;
++		}
++		free(buf);
++		close(tar_fd);
++		ofs = 0;
++		return (mtdofs - in_mtdofs);
++	}
+ 
+-	return (mtdofs - ofs);
++	add_tar_cleanup(outfd, in_mtdofs);
++	return mtdofs - in_mtdofs;
+ }
+ 
+ void mtd_parse_jffs2data(const char *buf, const char *dir)
+--- a/mtd.c
++++ b/mtd.c
+@@ -468,8 +468,8 @@ mtd_write(int imagefd, const char *mtd, 
+ 	ssize_t r, w, e;
+ 	ssize_t skip = 0;
+ 	uint32_t offset = 0;
+	int buflen_raw = 0;
+-	int jffs2_replaced = 0;
++	int jffs2_tar_file_added = 0;
+ 	int skip_bad_blocks = 0;
+ 
+ #ifdef FIS_SUPPORT
+@@ -597,8 +597,8 @@ resume:
+ 				if (quiet < 2)
+ 					fprintf(stderr, "\nAppending jffs2 data from %s to %s..\n.", jffs2file, mtd);
+ 				/* got an EOF marker - this is the place to add some jffs2 data */
+-				skip = mtd_replace_jffs2(mtd, fd, e, jffs2file);
+-				jffs2_replaced = 1;
++				skip = mtd_add_tar_file_jffs2(mtd, fd, e, jffs2file);
++				jffs2_tar_file_added = 1;
+ 
+ 				/* don't add it again */
+ 				jffs2file = NULL;
+@@ -675,7 +675,7 @@ resume:
+ 		offset = 0;
+ 	}
+ 
+-	if (jffs2_replaced) {
++	if (jffs2_tar_file_added) {
+ 		switch (imageformat) {
+ 		case MTD_IMAGE_FORMAT_TRX:
+ 			if (trx_fixup)
+--- a/mtd.h
++++ b/mtd.h
+@@ -19,7 +19,7 @@ extern int mtd_block_is_bad(int fd, int 
+ extern int mtd_erase_block(int fd, int offset);
+ extern int mtd_write_buffer(int fd, const char *buf, int offset, int length);
+ extern int mtd_write_jffs2(const char *mtd, const char *filename, const char *dir);
+-extern int mtd_replace_jffs2(const char *mtd, int fd, int ofs, const char *filename);
++extern int mtd_add_tar_file_jffs2(const char *mtd, int fd, int ofs, const char *filename);
+ extern void mtd_parse_jffs2data(const char *buf, const char *dir);
+ 
+ /* target specific functions */
