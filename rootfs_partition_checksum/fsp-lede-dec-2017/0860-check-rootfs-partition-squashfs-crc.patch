@@ -36,12 +36,12 @@
  static char *ramdisk_execute_command;
  
 +/* 
-+ * Reading from /dev/mtd5 is a piece of cake...
-+ * Writing to to /dev/mtd9 is a bit trickier, 
++ * Reading from /dev/firmware is a piece of cake...
++ * Writing to to /dev/oops is a bit trickier, 
 + * and requires some explicit help from the mtd
 + * driver.
 + */
-+static struct mtd_info* mtd9_info = NULL;
++static struct mtd_info* oops_info = NULL;
 +
  /*
   * Used to generate warnings if static_key manipulation functions are used
@@ -99,9 +99,9 @@
 +	unsigned int squashfs_blob_crc_uint;
 +	unsigned int running_crc;
 +
-+	int mtd5_fd;
++	int firmware_fd;
 +
-+	unsigned int mtd9_offset;
++	unsigned int oops_offset;
 +	int erase_ret;
 +	struct erase_info ei = {0};
 +	wait_queue_head_t waitq;
@@ -110,28 +110,28 @@
 +
 +	char oops_header_plus_message[71];
 +
-+	mtd5_fd = sys_open("/dev/mtdblock5", O_RDONLY, 0);
-+	if(mtd5_fd == -1)
++	firmware_fd = sys_open("/dev/firmware", O_RDONLY, 0);
++	if(firmware_fd == -1)
 +	{
-+		panic("/dev/mtdblock5 cannot be opened\n");
++		panic("/dev/firmware cannot be opened\n");
 +	}
 +
 +	/* 
 +	 * Parse linux image size, type, and squashfs size and crc from uImage header
 +	 */
-+	sys_lseek(mtd5_fd, 12, SEEK_SET);
-+	sys_read(mtd5_fd, image_size_string, 4);
-+	sys_lseek(mtd5_fd, 14, SEEK_CUR);
-+	sys_read(mtd5_fd, &image_type_char, 1);
-+	sys_lseek(mtd5_fd, 25, SEEK_CUR);
++	sys_lseek(firmware_fd, 12, SEEK_SET);
++	sys_read(firmware_fd, image_size_string, 4);
++	sys_lseek(firmware_fd, 14, SEEK_CUR);
++	sys_read(firmware_fd, &image_type_char, 1);
++	sys_lseek(firmware_fd, 25, SEEK_CUR);
 +	/*
 +	 * Sanity check that we haven't changed the uImage type
 +	 * which would mean that linux + squashfs structure would have changed
 +	 */
 +	if(image_type_char == IH_TYPE_KERNEL)
 +	{
-+		sys_read(mtd5_fd, squashfs_blob_size_string, 4);
-+		sys_read(mtd5_fd, squashfs_blob_crc_string, 4);
++		sys_read(firmware_fd, squashfs_blob_size_string, 4);
++		sys_read(firmware_fd, squashfs_blob_crc_string, 4);
 +		
 +		image_size_uint = (image_size_string[0] << 24) | (image_size_string[1] << 16) | (image_size_string[2] << 8) | image_size_string[3];
 +		squashfs_blob_size_uint = (squashfs_blob_size_string[0] << 24) | (squashfs_blob_size_string[1] << 16) | (squashfs_blob_size_string[2] << 8) | squashfs_blob_size_string[3];
@@ -144,7 +144,7 @@
 +		* size of the linux image, it does NOT include
 +		* the size of the uImage header
 +		*/
-+		sys_lseek(mtd5_fd, image_size_uint, SEEK_CUR);
++		sys_lseek(firmware_fd, image_size_uint, SEEK_CUR);
 +
 +		/* 
 +		* Calculate crc of squashfs blob, zero starting
@@ -153,19 +153,19 @@
 +		* (also with 0 starting seed) which matches 
 +		* the standard linux/crc32.h crc32() we are using
 +		*/
-+		sys_read(mtd5_fd, chunk_for_crc, CRC_BLOCK_SIZE);
++		sys_read(firmware_fd, chunk_for_crc, CRC_BLOCK_SIZE);
 +		running_crc = crc32(0, chunk_for_crc, CRC_BLOCK_SIZE);
 +		squashfs_blob_size_uint -= CRC_BLOCK_SIZE;
 +		while(squashfs_blob_size_uint > CRC_BLOCK_SIZE)
 +		{
-+			sys_read(mtd5_fd, chunk_for_crc, CRC_BLOCK_SIZE);
++			sys_read(firmware_fd, chunk_for_crc, CRC_BLOCK_SIZE);
 +			running_crc = crc32(running_crc, chunk_for_crc, CRC_BLOCK_SIZE);
 +			squashfs_blob_size_uint -= CRC_BLOCK_SIZE;
 +		}
-+		sys_read(mtd5_fd, chunk_for_crc, squashfs_blob_size_uint);
++		sys_read(firmware_fd, chunk_for_crc, squashfs_blob_size_uint);
 +		running_crc = crc32(running_crc, chunk_for_crc, squashfs_blob_size_uint);
 +
-+		sys_close(mtd5_fd);
++		sys_close(firmware_fd);
 +
 +		if(running_crc != squashfs_blob_crc_uint)
 +		{
@@ -177,7 +177,7 @@
 +				squashfs_blob_crc_uint
 +				);
 +
-+			mtd9_info = get_mtd_device(NULL, 9);
++			oops_info = get_mtd_device(NULL, 9);
 +			
 +			/*
 +			 * mtd operations at the kernel level may sleep.
@@ -186,16 +186,16 @@
 +			 * since we can assume that corrupted squashfs is the reason for 
 +			 * any oopses currently logged.
 +			 */
-+			for(mtd9_offset = 0; mtd9_offset < mtd9_info->size; mtd9_offset += mtd9_info->erasesize)
++			for(oops_offset = 0; oops_offset < oops_info->size; oops_offset += oops_info->erasesize)
 +			{
 +				DECLARE_WAITQUEUE(wait, current);
 +    			init_waitqueue_head(&waitq);
-+    			ei.addr = mtd9_offset;
-+    			ei.len = mtd9_info->erasesize;
-+    			ei.mtd = mtd9_info;
++    			ei.addr = oops_offset;
++    			ei.len = oops_info->erasesize;
++    			ei.mtd = oops_info;
 +    			ei.callback = erase_callback;
 +    			ei.priv = (unsigned long)&waitq;
-+    			erase_ret = mtd_erase(mtd9_info, &ei);
++    			erase_ret = mtd_erase(oops_info, &ei);
 +    			if(!erase_ret)
 +				{
 +        			set_current_state(TASK_UNINTERRUPTIBLE);
@@ -215,7 +215,7 @@
 +			 * that erases the first page of the oops partition even if it doesn't have to. Just to be safe,
 +			 * we will add a spoofed oops header AND write to the second oops page (if it exists) to avoid any
 +			 * complications. Header must be written to be interpreted as big endian integers
-+			 * (in other words... 'hexdump /dev/mtd9' should show the first 8 bytes as 0011 0000 5d00 5d00).
++			 * (in other words... 'hexdump /dev/oops' should show the first 8 bytes as 0011 0000 5d00 5d00).
 +			 */
 +			oops_header_plus_message[0] = 17;
 +			oops_header_plus_message[1] = 0;
@@ -232,19 +232,19 @@
 +			 * if oops partition size is only 1 erase block size, 
 +			 * hope that the spoofed oops header works (don't worry, it will) and write to the first page
 +			 */
-+			if(mtd9_offset < 0x20000)
++			if(oops_offset < 0x20000)
 +			{
 +				write_offset = 0;
 +			}
 +			else
 +			{
-+				write_offset = mtd9_info->erasesize;
++				write_offset = oops_info->erasesize;
 +			}
 +
 +			/*
 +			 * message len is 62 + 8 byte header -> 70 bytes must be written
 +			 */
-+			mtd_write(mtd9_info, write_offset, 70, &bytes_written, oops_header_plus_message);
++			mtd_write(oops_info, write_offset, 70, &bytes_written, oops_header_plus_message);
 +			
 +			msleep(5000);
 +			panic("Instructions for services are corrupted, panicking\n");
@@ -269,7 +269,7 @@
 +	 * make sure our user processes are still intact! 
 +	 * we will panic if otherwise. The mtd driver 
 +	 * gets initialized in do_basic_setup(), so we can now 
-+	 * read from /dev/mtd5 and write to /dev/mtd9.
++	 * read from /dev/firmware and write to /dev/oops.
 +	 * 24jan20sm
 +	 */
 +	if(should_do_squashfs_crc_check(saved_command_line))
