@@ -8,4 +8,4 @@ These patches will never be mainlined into the official repositories, since they
 
 Ultimately, these bugs are just too messy to fix, and so would be deemed "just the way it is" in the distributions if they were known (and I fear these may NOT be known). However, they can be fatal bugs under certain conditions and should be patched if possible.
 
-Since these patches might break with every change made to the official OpenWrt repo, I will not be maintaining and updating these patches UNLESS I get some feedback from people actually using these.
+Since these patches might break with every change made to the official OpenWrt repo, I will not be maintaining and updating these patches UNLESS I get some feedback from people actually using them.
