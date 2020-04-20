@@ -1,4 +1,4 @@
-# OpenWrt-fsp-lede-patches
+# OpenWrt-LEDE-patches
 
 A collection of patches for the LEDE and OpenWrt embedded Linux distributions.
 
