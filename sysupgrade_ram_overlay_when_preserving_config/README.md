@@ -12,7 +12,7 @@ To verify that this bug exists on your processor, after a sysupgrade, you will f
 `[   11.600000] jffs2_build_filesystem(): erasing all blocks after the end marker... done`<br/>
 
 The desired behavior would instead print the following: <br/>
-`[   11.480000] mount_root: jffs2 not ready yet, using temporary tmpfs overlay`
+`[   11.480000] mount_root: jffs2 not ready yet, using temporary tmpfs overlay`<br/>
 and then later in the boot sequence:<br/>
 `[   44.040000] jffs2_scan_eraseblock(): End of filesystem marker found at 0x0`<br/>
 `[   44.040000] jffs2_build_filesystem(): unlocking the mtd device... done.`<br/>
