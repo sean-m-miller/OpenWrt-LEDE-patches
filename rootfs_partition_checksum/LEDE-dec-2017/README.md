@@ -8,5 +8,8 @@
 1. Add 'squashfs_crc=1' to the bootargs in your target .dts file. The checksum will only be verified if this bootarg is present.
 2. In your firmware image builder, modify your mkimage call to include the -S flag, followed by the name of the sqaushfs blob.
 `mkimage ... -S /path/to/root.squashfs ...`
-2. clone this repo and change directory to `OpenWrt-fsp-lede-patches/rootfs_partition_checksum/fsp-lede-dec-2017`, and run:
-`mv mkimage-adds-rootfs-partition-squashfs-size-and-crc-to-uImage-header.patch /path_to_your_OpenWrt_trunk/tools/mkimage/patches/ ; mv 0860-check-rootfs-partition-squashfs-crc.patch /path_to_your_OpenWrt_trunk/target/linux/your_target/patches-3.18/ ; cd /path_to_your_OpenWrt_trunk/ ; make`
+2. clone this repo and change directory to `OpenWrt-fsp-lede-patches/rootfs_partition_checksum/fsp-lede-dec-2017`, and run:<br/>
+`mv mkimage-adds-rootfs-partition-squashfs-size-and-crc-to-uImage-header.patch /path_to_your_OpenWrt_trunk/tools/mkimage/patches/`<br/>
+`mv 0860-check-rootfs-partition-squashfs-crc.patch /path_to_your_OpenWrt_trunk/target/linux/your_target/patches-3.18/`<br/>
+`cd /path_to_your_OpenWrt_trunk/`<br/>
+`make`
