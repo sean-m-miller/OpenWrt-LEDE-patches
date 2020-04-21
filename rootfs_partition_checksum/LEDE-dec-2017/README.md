@@ -12,4 +12,4 @@
 `mv mkimage-adds-rootfs-partition-squashfs-size-and-crc-to-uImage-header.patch /path_to_your_OpenWrt_trunk/tools/mkimage/patches/`<br/>
 `mv 0860-check-rootfs-partition-squashfs-crc.patch /path_to_your_OpenWrt_trunk/target/linux/your_target/patches-3.18/`<br/>
 `cd /path_to_your_OpenWrt_trunk/`<br/>
-`make`
+`make`<br/>
