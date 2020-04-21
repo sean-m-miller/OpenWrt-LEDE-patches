@@ -23,7 +23,7 @@ This signifies that the tmpfs overlay was launched, and that all rootfs_data blo
 
 **Reasons for not Submitting to official Repo:** This patch is compatible with all versions of OpenWrt released after 2008. Unfortunately, to downgrade from firmware including this patch to an earlier version would require creating an intermediate custom firmware consisting of the target firmware with only the read-side .patch file applied and sysupgrading to that firmware, followed by a sysupgrade to the target firmware without either of the .patch files applied. Otherwise, the preserved config file would be corrupted and lost during the downgrade. This makes this patch unusable for some OpenWrt developers.
 
-**Compatibility:** For 
+**Compatibility:** A patch was added in August of 2018 that made all OpenWrt distributions thereafter require a one line change to this patch. If your OpenWrt version is newer than August 2018, use the patch files contained in OpenWrt-apr-2020/. If you are using an OpenWrt version from before August 2018 or LEDE, use the patch files contained in LEDE-dec-2017/.
 
 **Things You Must Change** None.
 
