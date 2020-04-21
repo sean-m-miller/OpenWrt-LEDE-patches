@@ -27,11 +27,10 @@ This signifies that the tmpfs overlay was launched, and that all rootfs_data blo
 
 **Things You Must Change** None.
 
-**To Apply and Use:**
-2. clone this repo and change directory to `OpenWrt-fsp-lede-patches/sysupgrade_ram_overlay_when_preserving_config/your_version`, and run:<br/>
-`mkdir /your_OpenWrt_trunk/package/system/fstools/patches/`<br/>
-`mv 010-restore_tar_from_rootfs_data.patch /your_OpenWrt_trunk/package/system/fstools/patches/`<br/>
-`mkdir /your_OpenWrt_trunk/package/system/mtd/patches/`<br/>
-`mv 010-write_tar_to_rootfs_data.patch /your_OpenWrt_trunk/package/system/mtd/patches/`<br/>
-`cd /your_OpenWrt_trunk/`<br/>
+**To Apply and Use:** Clone this repo and change directory to `OpenWrt-fsp-lede-patches/sysupgrade_ram_overlay_when_preserving_config/your_version`, and run:<br/>
+`mkdir /your_OpenWrt_trunk_path/package/system/fstools/patches/`<br/>
+`mv 010-restore_tar_from_rootfs_data.patch /your_OpenWrt_trunk_path/package/system/fstools/patches/`<br/>
+`mkdir /your_OpenWrt_trunk_path/package/system/mtd/patches/`<br/>
+`mv 010-write_tar_to_rootfs_data.patch /your_OpenWrt_trunk_path/package/system/mtd/patches/`<br/>
+`cd /your_OpenWrt_trunk_path/`<br/>
 `make`<br/>
