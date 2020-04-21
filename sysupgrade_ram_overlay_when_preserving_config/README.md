@@ -6,18 +6,19 @@ Then, on reboot, the [80_mount_root](https://github.com/openwrt/openwrt/blob/mas
 
 The current design is also "sloppy" because the jffs2 driver looks for the 0xdeadc0de marker as the starting point to begin cleaning and reformatting blocks for the jffs2 overlay, and since the 0xdeadc0de marker was moved to be after the tar file, the jffs2 driver never cleans the blocks at the beginning of the rootfs_data partition that were used to store the config. Those blocks get cleaned before use at some point during run time. Certainly, we should be launching the jffs2 overlay with a totally clean rootfs_data partition.
 
-To verify that this bug exists on your processor, after a sysupgrade, you will find the following in `dmesg`:<br/>
+To verify that this bug exists on your processor, after rebooting from a sysupgrade that preserves a config, you will find the following in `dmesg`:<br/>
 `[   11.600000] jffs2_scan_eraseblock(): End of filesystem marker found at 0x10000`<br/>
 `[   11.600000] jffs2_build_filesystem(): unlocking the mtd device... done`<br/>
 `[   11.600000] jffs2_build_filesystem(): erasing all blocks after the end marker... done`<br/>
+These messages are from the jffs2 driver, which is getting called during preinit main, and is failing to erase the blocks used to store the tar file (the blocks from 0x0 - 0x10000).
 
 The desired behavior would instead print the following: <br/>
 `[   11.480000] mount_root: jffs2 not ready yet, using temporary tmpfs overlay`<br/>
-and then later in the boot sequence:<br/>
+This shows mount_root falling into the FS_DEADCODE case, kicking off the RAM overlay, and deferring the rootfs_data cleaning until after preinit main has finished. Then Later in the boot sequence:<br/>
 `[   44.040000] jffs2_scan_eraseblock(): End of filesystem marker found at 0x0`<br/>
 `[   44.040000] jffs2_build_filesystem(): unlocking the mtd device... done.`<br/>
 `[   44.040000] jffs2_build_filesystem(): erasing all blocks after the end marker...`<br/>
-This signifies that the tmpfs overlay was launched, and that all rootfs_data blocks were successfully erased before the mounting of the jffs2 overlay.
+This signifies that jffs2 driver was called about 30 seconds later (during the done script), and that all rootfs_data blocks were successfully erased before the mounting of the jffs2 overlay.
 
 **The Patch:** The patch changes the behavior of sysupgrade to keep the 0xdeadc0de marker at the rootfs/rootfs_data boundary, and writes the file to raw flash in the following erase blocks. Since the 0xdeadc0de is kept where it belongs, upon reboot after the upgrade, mount_root falls into the FS_DEADCODE case and launches the /tmp RAM overlay. Then it reads the file from flash and untars the file into the new RAM /root. When the `/etc/init.d/done` script calls `mount_root done`, the entire rootfs_data partition (including the region used to store the config file) is cleaned, and then the jffs2 overlay is mounted.
 
