@@ -22,3 +22,16 @@ This signifies that the tmpfs overlay was launched, and that all rootfs_data blo
 **The Patch:** The patch changes the behavior of sysupgrade to keep the 0xdeadc0de marker at the rootfs/rootfs_data boundary, and writes the file to raw flash in the following erase blocks. Since the 0xdeadc0de is kept where it belongs, upon reboot after the upgrade, mount_root falls into the FS_DEADCODE case and launches the /tmp RAM overlay. Then it reads the file from flash and untars the file into the new RAM /root. When the `/etc/init.d/done` script calls `mount_root done`, the entire rootfs_data partition (including the region used to store the config file) is cleaned, and then the jffs2 overlay is mounted.
 
 **Reasons for not Submitting to official Repo:** This patch is compatible with all versions of OpenWrt released after 2008. Unfortunately, to downgrade from firmware including this patch to an earlier version would require creating an intermediate custom firmware consisting of the target firmware with only the read-side .patch file applied and sysupgrading to that firmware, followed by a sysupgrade to the target firmware without either of the .patch files applied. Otherwise, the preserved config file would be corrupted and lost during the downgrade. This makes this patch unusable for some OpenWrt developers.
+
+**Compatibility:** For 
+
+**Things You Must Change** None.
+
+**To Apply and Use:**
+2. clone this repo and change directory to `OpenWrt-fsp-lede-patches/sysupgrade_ram_overlay_when_preserving_config/your_version`, and run:<br/>
+`mkdir /your_OpenWrt_trunk/package/system/fstools/patches/`<br/>
+`mv 010-restore_tar_from_rootfs_data.patch /your_OpenWrt_trunk/package/system/fstools/patches/`<br/>
+`mkdir /your_OpenWrt_trunk/package/system/mtd/patches/`<br/>
+`mv 010-write_tar_to_rootfs_data.patch /your_OpenWrt_trunk/package/system/mtd/patches/`<br/>
+`cd /your_OpenWrt_trunk/`<br/>
+`make`<br/>
