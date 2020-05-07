@@ -1,13 +1,62 @@
 **The Bug:** If a config is preserved across a firmware upgrade via the sysupgrade utility (`sysupgrade -c`), the tmpfs RAM overlay is skipped and the jffs2 overlay is prepared and mounted while the preinit_main script hangs. This is a bug and can lockup boards with large "rootfs_data" partitions. 
 
-**Description:** In 2008, the [ability to preserve a config across sysupgrades](https://github.com/bmork/OpenWrt/blob/master/package/system/mtd/src/jffs2.c) was added (see mtd_replace_jffs2()). The mechanism, which is still the behavior in the offical OpenWrt repo as of April 2020, writes the tar file to be preserved at the beginning of the rootfs_data partition, and moves the [0xdeadc0de flag that signifies the rootfs/rootfs_data boundary](https://openwrt.org/docs/techref/filesystems) to be at the start of the next erase block after the tar file. The file is written as a valid jffs2 node, which requires that it is preceded by a jffs2 file header. jffs2 file headers have 0x1985 as the first 2 bytes, which matches the first 2 bytes of the jffs2 ["CLEANMARKER"](https://github.com/m-labs/openwrt-milkymist/blob/master/package/mtd/src/jffs2.c), defined as 0x198520030000000cf060dc98.
+**Description:** In 2008, the [ability to preserve a config across sysupgrades](https://github.com/bmork/OpenWrt/blob/master/package/system/mtd/src/jffs2.c) was added (see mtd_replace_jffs2()). The mechanism, which is included in offical OpenWrt builds as of April 2020, writes the tar file to be preserved at the beginning of the rootfs_data partition, and moves the [0xdeadc0de flag that signifies the rootfs/rootfs_data boundary](https://openwrt.org/docs/techref/filesystems) to be at the start of the next erase block after the tar file. The file is written as a valid jffs2 node, which requires that it is preceded by a jffs2 file header. [jffs2 file headers have 0x1985 as the first 2 bytes](https://github.com/torvalds/linux/blob/master/include/uapi/linux/jffs2.h):
 
-Then, on reboot, the [80_mount_root](https://github.com/openwrt/openwrt/blob/master/package/base-files/files/lib/preinit/80_mount_root) script calls the [mount_root](https://git.openwrt.org/?p=project/fstools.git;a=blob;f=mount_root.c) utility, which examines the first bytes of the rootfs_data partition using [this logic](https://lxr.openwrt.org/source/fstools/libfstools/mtd.c) (see mtd_volume_identify()). It examines the first four bytes of the partition to try to match with 0xdeadc0de to set the FS_DEADCODE case, but instead matches with the 2 byte 0x1985 (due to the jffs2 file header format), setting the FS_JFFS2 case. Therefore, the mount_root utility gets "tricked" into thinking that the rootfs_data partition has already been cleaned, with every erase block being set to the jffs2 cleanmarker followed by 0xff until the next block boundary. This causes mount_root to immediately launch the jffs2 driver to mount the jffs2 overlay with the assumption that there is no more cleaning or formatting work to be done. 
+`#define JFFS2_MAGIC_BITMASK 0x1985`
 
-[This behaviour is undesired](https://openwrt.org/docs/techref/preinit_mount) (see steps 3-5 in the **Mount Root Filesystem** section), since it hangs the preinit main while the jffs2 driver cleans and formats the rootfs_data partition. 
-The desired behavior is to have mount_root fall into the FS_DEADCODE case during the 80_mount_root script, which would mount the /tmp RAM overlay, and defer the switch to the jffs2 overlay until the [/etc/init.d/done](https://github.com/openwrt/openwrt/blob/master/package/base-files/files/etc/init.d/done) script gets called at the end of the init sequence. The intended behaviour is reiterated in a comment found in the FS_DEADCODE case in [mount_root.c](https://github.com/ianclegg/openwrt-fsutils/blob/master/mount_root.c), "Filesystem isn't ready yet and we are in the preinit, so we can't afford waiting for it. Use tmpfs for now and handle it properly in the 'done' call".
+which matches the first 2 bytes of the jffs2 ["CLEANMARKER"](https://github.com/m-labs/openwrt-milkymist/blob/master/package/mtd/src/jffs2.c) 
 
-The current design is also "sloppy" because the jffs2 driver looks for the 0xdeadc0de marker as the starting point to begin cleaning and reformatting blocks for the jffs2 overlay. Since the 0xdeadc0de is moved to the erase block following the tar file, the jffs2 driver never cleans the blocks at the beginning of the rootfs_data partition that were used to store the tar file. Those blocks get cleaned before use at some point during run time. Certainly, we should be launching the jffs2 overlay with a totally clean rootfs_data partition.
+`# define CLEANMARKER "\x19\x85\x20\x03\x00\x00\x00\x0c\xf0\x60\xdc\x98"`
+
+Then, on reboot, the [80_mount_root](https://github.com/openwrt/openwrt/blob/master/package/base-files/files/lib/preinit/80_mount_root) examines the first bytes of the rootfs_data partition using [this logic](https://lxr.openwrt.org/source/fstools/libfstools/mtd.c):
+```
+static int mtd_volume_identify(struct volume *v){
+  ...
+  deadc0de = __be32_to_cpu(deadc0de);
+  if (deadc0de == 0xdeadc0de) {
+    return FS_DEADCODE;
+  } 
+  if (__be16_to_cpu(deadc0de) == 0x1985 ||
+    __be16_to_cpu(deadc0de >> 16) == 0x1985)
+    return FS_JFFS2;
+  ...
+}
+```
+
+It examines the first four bytes of the partition, with the intention of matching with the 0xdeadc0de flag to set the FS_DEADCODE case. from the [mount_root](https://git.openwrt.org/?p=project/fstools.git;a=blob;f=mount_root.c) utility:
+```
+static int start(int argc, char *argv[1]){
+  ...
+  switch (volume_identify(data)) {
+    case FS_DEADCODE:
+      /*
+       * Filesystem isn't ready yet and we are in the preinit, so we
+       * can't afford waiting for it. Use tmpfs for now and handle it
+       * properly in the "done" call.
+       */
+       ULOG_NOTE("jffs2 not ready yet, using temporary tmpfs overlay\n");
+       return ramoverlay();         
+                 
+    case FS_EXT4:
+    case FS_F2FS:
+    case FS_JFFS2:
+    case FS_UBIFS:
+      mount_overlay(data);
+      break;
+    ...
+    }
+  ...
+  }
+...
+}
+```
+
+Instead, it matches with the 2 byte 0x1985 (due to the jffs2 file header format), setting the FS_JFFS2 case. The FS_JFFS2 case is intended for "normal" boots that are not the first after the sysupgrade, when we assume that the rootfs_data partition already exists in a valid jffs2 format so that we can immediately mount the jffs2 overlay and create links to our stored non-volatile files. Therefore, the mount_root utility effectively gets "tricked" into thinking that the rootfs_data partition already exists in a valid format (It doesn't). This causes mount_root to immediately launch the jffs2 driver to mount the jffs2 overlay with the assumption that there is no cleaning or formatting work to be done.
+
+[This behaviour is undesired](https://openwrt.org/docs/techref/preinit_mount) (see steps 3-5 in the **Mount Root Filesystem** section), since it hangs the preinit main while the jffs2 driver cleans and formats the rootfs_data partition by erasing and setting each block to contain the jffs2 cleanmarker followed by 0xff until the next block boundary.
+The desired behavior is to have mount_root fall into the FS_DEADCODE case during the 80_mount_root script, which would mount the /tmp RAM overlay, and defer the switch to the jffs2 overlay until the [/etc/init.d/done](https://github.com/openwrt/openwrt/blob/master/package/base-files/files/etc/init.d/done) script gets called at the end of the init sequence. The intended behaviour is reiterated in a comment shown above in the FS_DEADCODE case from mount_root, "Filesystem isn't ready yet and we are in the preinit, so we can't afford waiting for it. Use tmpfs for now and handle it properly in the 'done' call".
+
+The current design is also "sloppy" because the jffs2 driver [looks for the 0xdeadc0de marker as the starting point to begin cleaning and reformatting blocks for the jffs2 overlay](https://github.com/openwrt-mirror/openwrt/blob/master/target/linux/generic/patches-3.18/532-jffs2_eofdetect.patch). Since the 0xdeadc0de is moved to the erase block following the tar file, the jffs2 driver never cleans the blocks at the beginning of the rootfs_data partition that were used to store the tar file. Those blocks get cleaned before use at some point during run time. Certainly, we should be launching the jffs2 overlay with a totally clean rootfs_data partition.
 
 To verify that this bug exists on your processor, after rebooting from a sysupgrade that preserves a config, you will find the following in `dmesg`:<br/>
 `[   11.600000] jffs2_scan_eraseblock(): End of filesystem marker found at 0x10000`<br/>
