@@ -82,7 +82,8 @@ static int start(int argc, char *argv[1]){
 
 The current design is also "sloppy" because the jffs2 driver [looks for the 0xdeadc0de marker as the starting point to begin cleaning and reformatting blocks for the jffs2 overlay](https://github.com/openwrt-mirror/openwrt/blob/master/target/linux/generic/patches-3.18/532-jffs2_eofdetect.patch):
 
-```if ((buf[0] == 0xde) &&
+```
+if ((buf[0] == 0xde) &&
   (buf[1] == 0xad) &&
   (buf[2] == 0xc0) &&
   (buf[3] == 0xde)) {
