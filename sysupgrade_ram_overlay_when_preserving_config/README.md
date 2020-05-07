@@ -19,8 +19,6 @@ static int mtd_volume_identify(struct volume *v){
   if (__be16_to_cpu(deadc0de) == 0x1985 ||
     __be16_to_cpu(deadc0de >> 16) == 0x1985)
     return FS_JFFS2;
-  ...
-}
 ```
 
 It examines the first four bytes of the partition, with the intention of matching with the 0xdeadc0de flag to set the FS_DEADCODE case. Instead, it matches with the 2 byte 0x1985 magic (due to the jffs2 file header format), setting the FS_JFFS2 case. From the [mount_root](https://git.openwrt.org/?p=project/fstools.git;a=blob;f=mount_root.c) utility defaut call:
@@ -43,12 +41,6 @@ static int start(int argc, char *argv[1]){
     case FS_UBIFS:
       mount_overlay(data);
       break;
-    ...
-    }
-  ...
-  }
-...
-}
 ```
 
 The FS_JFFS2 case is intended for "normal" boots that are not the first after the sysupgrade, when we can assume that the rootfs_data partition already exists in a valid jffs2 format (either totally clean or containing valid jffs2 nodes) so that we can immediately mount the jffs2 overlay and create links to any stored non-volatile files. Therefore, when we preserve files across sysupgrades, the mount_root utility effectively gets "tricked" into thinking that the rootfs_data partition already exists in a valid format even though it does not. This causes mount_root to immediately launch the jffs2 driver to mount the jffs2 overlay with the assumption that there is no cleaning or formatting work to be done.
@@ -59,28 +51,20 @@ The desired behavior is to have mount_root fall into the FS_DEADCODE case during
 ```
 START=95
 boot() {
-	mount_root done
-	rm -f /sysupgrade.tgz
-  ...
- }
- ```
- And from the [mount_root](https://git.openwrt.org/?p=project/fstools.git;a=blob;f=mount_root.c) utility done call:
+  mount_root done
+  rm -f /sysupgrade.tgz
+```
+And from the [mount_root](https://git.openwrt.org/?p=project/fstools.git;a=blob;f=mount_root.c) utility done call:
 
 ```
 done(int argc, char *argv[1])
 {
-	struct volume *v = volume_find("rootfs_data");
-  
+  struct volume *v = volume_find("rootfs_data");
   ...
-  
-	switch (volume_identify(v)) {
-	  case FS_NONE:
-	  case FS_DEADCODE:
-		  return jffs2_switch(v);
-    ...
-    }
-  ...
-}
+  switch (volume_identify(v)) {
+    case FS_NONE:
+    case FS_DEADCODE:
+    	return jffs2_switch(v);
 ```
 
 The intended behaviour is reiterated in a comment previously shown above in the FS_DEADCODE case from [mount_root](https://git.openwrt.org/?p=project/fstools.git;a=blob;f=mount_root.c):
@@ -94,9 +78,6 @@ static int start(int argc, char *argv[1]){
        * can't afford waiting for it. Use tmpfs for now and handle it
        * properly in the "done" call.
        */
-    ...
-  ...
-}
 ```
 
 The current design is also "sloppy" because the jffs2 driver [looks for the 0xdeadc0de marker as the starting point to begin cleaning and reformatting blocks for the jffs2 overlay](https://github.com/openwrt-mirror/openwrt/blob/master/target/linux/generic/patches-3.18/532-jffs2_eofdetect.patch):
