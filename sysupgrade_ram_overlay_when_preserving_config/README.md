@@ -101,13 +101,15 @@ These messages are from the jffs2 driver, which is getting called during preinit
 
 The desired behavior would instead print the following: <br/>
 `[   11.480000] mount_root: jffs2 not ready yet, using temporary tmpfs overlay`<br/>
-This shows mount_root falling into the FS_DEADCODE case, kicking off the RAM overlay, and deferring the rootfs_data cleaning until after preinit main has finished. Then Later in the boot sequence:<br/>
+This shows mount_root falling into the FS_DEADCODE case, kicking off the RAM overlay, and deferring the rootfs_data cleaning until after preinit main has finished. This line is never printed with current OpenWrt builds if a config is preserved. Then Later in the boot sequence:<br/>
 `[   44.040000] jffs2_scan_eraseblock(): End of filesystem marker found at 0x0`<br/>
 `[   44.040000] jffs2_build_filesystem(): unlocking the mtd device... done.`<br/>
 `[   44.040000] jffs2_build_filesystem(): erasing all blocks after the end marker...`<br/>
 This signifies that jffs2 driver was called about 30 seconds later (during the done script), and that all rootfs_data blocks starting at offset 0x0 were successfully erased before the mounting of the jffs2 overlay.
 
-It is also important to note that the second (intended) dmesg behavior shown above is also the behavior you see when you run a sysupgrade without preserving a config (without the `-c` flag). Even if your system can handle the preinit_main hang, there is still a significant difference in the kernel init sequence depending on whether or not you preserved a config across the upgrade, which leads to inconcistencies across different post-upgrade boots. Whether or not you are preserving a tar file across the update is not a good enough reason to justify these inconsistencies, especially since they can be eliminated using this patch.
+It is also important to note that the second (intended) dmesg behavior shown above is the behavior you see when you run a sysupgrade without preserving a config (without the `-c` flag) on any official OpenWrt build. 
+
+Even if your system can handle the preinit_main hang, there is still a significant difference in the kernel init sequence depending on whether or not you preserve a config across the upgrade, which leads to inconcistencies across different post-upgrade boots. Whether or not you are preserving a tar file across the update is not a good enough reason to justify these inconsistencies, especially since they can be eliminated using this patch.
 
 **The Patch:** The patch changes the behavior of sysupgrade to keep the 0xdeadc0de marker at the rootfs/rootfs_data boundary, and writes the file to raw flash in the following erase blocks. Since the 0xdeadc0de is kept where it belongs, upon reboot after the upgrade, mount_root falls into the FS_DEADCODE case and launches the /tmp RAM overlay. Then it reads the file from flash and untars the file into the new RAM root directory. When the `/etc/init.d/done` script calls `mount_root done`, the entire rootfs_data partition (including the region used to store the config file) is cleaned, and then the jffs2 overlay is mounted and some files are copied back to the rootfs_data partition as jffs2 files.
 
